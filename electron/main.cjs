@@ -3,6 +3,7 @@ const path = require('node:path');
 const { startEngine, stopEngine, getPort } = require('./engine.cjs');
 const secrets = require('./secrets.cjs');
 const github = require('./github.cjs');
+const launcher = require('./launcher.cjs');
 
 const isDev = !app.isPackaged;
 const DEV_URL = 'http://localhost:5273';
@@ -60,6 +61,44 @@ ipcMain.handle('win:close', () => win && win.close());
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('app:platform', () => process.platform);
 ipcMain.handle('engine:port', () => getPort());
+
+// ── Run the generated project ──
+// Everything here is main-process only: the renderer can ask "can this run?"
+// and "open a terminal", but never gets to name a command.
+ipcMain.handle('run:check', async () => {
+  try {
+    return { ok: true, ...(await launcher.checkPrerequisites()) };
+  } catch (err) {
+    return { ok: false, error: String(err && err.message || err) };
+  }
+});
+
+ipcMain.handle('run:inspect', (_e, dir) => {
+  try {
+    return { ok: true, ...launcher.inspectProject(String(dir || '')) };
+  } catch (err) {
+    return { ok: false, error: String(err && err.message || err) };
+  }
+});
+
+ipcMain.handle('run:launch', async (_e, options) => {
+  // `mode` is validated against a fixed list rather than trusted, so the
+  // renderer cannot smuggle a command through it (SECURITY-002).
+  const allowed = new Set(['full', 'backend', 'frontend', 'seed', 'shell']);
+  const mode = allowed.has(options && options.mode) ? options.mode : 'full';
+  try {
+    return await launcher.launch({ dir: options && options.dir, mode });
+  } catch (err) {
+    return { ok: false, error: String(err && err.message || err) };
+  }
+});
+
+ipcMain.handle('run:open-folder', async (_e, dir) => {
+  const target = String(dir || '');
+  if (!target) return { ok: false };
+  const err = await shell.openPath(target);
+  return err ? { ok: false, error: err } : { ok: true };
+});
 
 // ── GitHub publishing ──
 // The token never crosses into the renderer. The UI can save it, ask whether

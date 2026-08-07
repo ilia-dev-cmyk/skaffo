@@ -76,6 +76,7 @@ cd engine
 
 ```bash
 node scripts/test-github.cjs    # GitHub publishing, against a fake API
+node scripts/test-launcher.cjs  # terminal launching, against a fake terminal (22)
 ```
 
 There is also a full end-to-end audit that launches the real app against a
@@ -120,6 +121,7 @@ Everything below is implemented, tested and shipping — **not planned, not stub
 | **Sample data** | A `seed.py` with believable rows — `email` looks like an email, `price` looks like money, foreign keys point at rows that exist |
 | **Publish to GitHub** | Create a repository and push, with the token held by your OS keychain — never by Skaffo |
 | **Export** | Write to folder or real ZIP (deflate), **dry run**, per-file diffs, export report, Open Folder |
+| **Run it** | Checks Python/Node versions, predicts the first-run wait, then opens your terminal — five modes: everything, API only, frontend only, reseed, or just a shell |
 | **Themes** | Dark · Light · Midnight · Nord, all via CSS variables |
 | **Languages** | 8 locales (en · fa · ar · es · de · fr · tr · zh) with real RTL layout |
 | **Accessibility** | Reduce-motion toggle, keyboard-only focus rings |
@@ -256,11 +258,13 @@ yours from the first launch.
 - [x] **v0.9** — Renamed to Skaffo · everything free · Support page
 - [x] **v0.9.1** — Injection hardening (SECURITY-002 / 003)
 - [x] **v0.10** — Sample data · publish to GitHub · empty first run
-- [x] **v1.0** — Windows installer · app icon · first-run welcome ← **you are here**
+- [x] **v1.0** — Windows installer · app icon · first-run welcome
+- [x] **v1.1** — Run in terminal, with prerequisite checks ← **you are here**
 - [ ] **v1.1** — Auto-update · command palette · in-app editor
 
 Decisions and risks behind this order: [`docs/REVIEW.md`](docs/REVIEW.md).
 How releases are built and verified: [`docs/RELEASE.md`](docs/RELEASE.md).
+How to test the Run panel by hand: [`docs/TESTING-v1.1.md`](docs/TESTING-v1.1.md).
 
 ---
 

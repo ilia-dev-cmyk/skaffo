@@ -19,6 +19,14 @@ contextBridge.exposeInMainWorld('skaffo', {
   engine: {
     port: () => ipcRenderer.invoke('engine:port'),
   },
+  // Running a generated project. The renderer picks a *mode*, never a
+  // command — main.cjs maps modes to commands from a fixed list.
+  run: {
+    check: () => ipcRenderer.invoke('run:check'),
+    inspect: (dir) => ipcRenderer.invoke('run:inspect', dir),
+    launch: (options) => ipcRenderer.invoke('run:launch', options),
+    openFolder: (dir) => ipcRenderer.invoke('run:open-folder', dir),
+  },
   // GitHub publishing. Note what is NOT here: there is no `getToken`. The
   // renderer can save a token and start a publish, but can never read one
   // back, so a compromised UI cannot exfiltrate it.

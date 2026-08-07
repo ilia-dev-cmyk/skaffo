@@ -1,6 +1,6 @@
 {
   "name": "skaffo",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "The fastest way to start any software project. Free and open source.",
   "author": "Skaffo",
   "license": "MIT",
@@ -19,7 +19,8 @@
     "build:icon": "electron scripts/make-icon.cjs && python scripts/dekey.py",
     "dist": "npm run build && npm run build:engine && electron-builder --win --publish never",
     "dist:dir": "npm run build && electron-builder --dir --publish never",
-    "audit:app": "electron scripts/audit.cjs"
+    "audit:app": "electron scripts/audit.cjs",
+    "test:launcher": "node scripts/test-launcher.cjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

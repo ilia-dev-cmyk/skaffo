@@ -11,6 +11,7 @@ import { useStore, useActiveProject } from '@core/store';
 import { api, type GenPreview, type GenAction, type ExportReport } from '@core/api';
 import { Card, Button, Badge, Toggle, SectionTitle, timeAgo } from '@ui/primitives';
 import PublishDialog from './PublishDialog';
+import RunPanel from './RunPanel';
 import DiffViewer from './DiffViewer';
 
 type FormatId = 'folder' | 'zip' | 'git' | 'docker' | 'production';
@@ -357,6 +358,13 @@ export default function ExportPage() {
               )}
             </Card>
           </div>
+
+          {report && format !== 'zip' && (
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-5">
+              <SectionTitle right={<Badge tone="success">next step</Badge>}>Run it</SectionTitle>
+              <RunPanel targetDir={report.target || preview?.target || ''} />
+            </motion.div>
+          )}
 
           {report && (
             <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mt-5">
