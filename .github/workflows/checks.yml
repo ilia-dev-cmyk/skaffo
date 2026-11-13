@@ -44,7 +44,19 @@ jobs:
       - run: node scripts/test-github.cjs
       - run: npm run build
       - name: End-to-end app audit (Xvfb)
-        run: xvfb-run -a npm run audit:app
+        run: |
+          log="$(mktemp)"
+          if xvfb-run -a npm run audit:app >"$log" 2>&1; then
+            cat "$log"
+          else
+            cat "$log"
+            # Runner log downloads can be inaccessible to contributors;
+            # surface the last failures as check annotations as well.
+            tail -n 25 "$log" | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit 1
+          fi
 
   windows:
     name: Windows path and terminal regression checks
