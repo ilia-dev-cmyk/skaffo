@@ -35,6 +35,12 @@ jobs:
       - run: python -m venv engine/.venv
       - run: engine/.venv/bin/python -m pip install -r engine/requirements.txt
       - run: npm ci
+      - name: Configure Chromium sandbox helper for GUI audit
+        run: |
+          # Chromium refuses to start if this helper exists without setuid root.
+          # Preserve sandboxing in CI rather than passing --no-sandbox.
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
       - name: JavaScript syntax
         run: |
           for file in electron/*.cjs scripts/*.cjs; do node --check "$file"; done
