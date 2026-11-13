@@ -122,15 +122,27 @@ export class ApiError extends Error {
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const bridge = (globalThis as any).skaffo?.engine;
+  if (bridge?.request) {
+    // The token stays in Electron's main process, never in the renderer.
+    const { status, data } = await bridge.request({
+      path, method: init?.method ?? 'GET', body: init?.body,
+    });
+    if (status < 200 || status >= 300) {
+      throw new ApiError(status, String(data?.detail ?? 'Engine request failed'));
+    }
+    return data as T;
+  }
+  // Browser-only development: no Electron bridge. The standalone engine is
+  // loopback-only and checks Host and Origin; see docs/SECURITY.md.
   const res = await fetch(API_BASE + path, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...(init?.headers ?? {}) },
   });
   if (!res.ok) {
     let detail = res.statusText;
-    try {
-      detail = (await res.json())?.detail ?? detail;
-    } catch { /* non-JSON body */ }
+    try { detail = (await res.json())?.detail ?? detail; }
+    catch { /* non-JSON body */ }
     throw new ApiError(res.status, detail);
   }
   return res.status === 204 ? (undefined as T) : res.json();

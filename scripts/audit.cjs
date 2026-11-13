@@ -11,7 +11,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const { startEngine, stopEngine, getPort } = require('../electron/engine.cjs');
+const { startEngine, stopEngine, getPort, requestEngine } = require('../electron/engine.cjs');
 const secrets = require('../electron/secrets.cjs');
 const github = require('../electron/github.cjs');
 
@@ -45,6 +45,7 @@ ipcMain.handle('win:close', () => {});
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('app:platform', () => process.platform);
 ipcMain.handle('engine:port', () => getPort());
+ipcMain.handle('engine:request', (_event, options) => requestEngine(options));
 
 function check(name, ok, detail = '') {
   results.push({ name, ok: !!ok, detail });
@@ -79,12 +80,9 @@ async function click(label, tries = 25) {
 }
 
 async function api(method, p, body) {
-  const r = await fetch(`http://127.0.0.1:${port}${p}`, {
-    method, headers: { 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const t = await r.text();
-  return { status: r.status, body: t ? JSON.parse(t) : null };
+  const r = await requestEngine({ path: p, method,
+    body: body ? JSON.stringify(body) : undefined });
+  return { status: r.status, body: r.data };
 }
 
 /**
@@ -127,8 +125,8 @@ async function main() {
   let ready = false;
   for (let i = 0; i < 80; i++) {
     try {
-      const r = await fetch(`http://127.0.0.1:${port}/health`);
-      if (r.ok) { ready = true; break; }
+      const r = await api('GET', '/health');
+      if (r.status === 200) { ready = true; break; }
     } catch { /* not up yet */ }
     await sleep(250);
   }
@@ -137,7 +135,7 @@ async function main() {
   win = new BrowserWindow({ width: 1500, height: 940, show: true,
     backgroundColor: '#0F172A', autoHideMenuBar: true,
     webPreferences: { preload: path.join(ROOT, 'electron', 'preload.cjs'),
-      contextIsolation: true, nodeIntegration: false, sandbox: false,
+      contextIsolation: true, nodeIntegration: false, sandbox: true,
       additionalArguments: [`--skaffo-port=${port}`] } });
   win.webContents.on('console-message', (_e, lv, m) => {
     if (lv >= 2 && !/DevTools|Autofill|GPU stall|Electron Security/i.test(m)) {

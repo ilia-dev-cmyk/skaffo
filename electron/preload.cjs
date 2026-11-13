@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('skaffo', {
   },
   engine: {
     port: () => ipcRenderer.invoke('engine:port'),
+    request: (options) => ipcRenderer.invoke('engine:request', options),
   },
   // Running a generated project. The renderer picks a *mode*, never a
   // command — main.cjs maps modes to commands from a fixed list.

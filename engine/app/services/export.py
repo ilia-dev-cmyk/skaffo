@@ -38,7 +38,9 @@ def build_zip(files: list[GeneratedFile], root_name: str) -> bytes:
     Everything sits under a single top-level folder so extracting never
     scatters files across the user's Downloads.
     """
-    safe_root = safe_relpath(root_name).strip("/") or "project"
+    safe_root = safe_relpath(root_name)
+    if "/" in safe_root:
+        raise UnsafeIdentifier("ZIP root must be a single directory name")
     buffer = io.BytesIO()
 
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
@@ -58,14 +60,25 @@ def build_zip(files: list[GeneratedFile], root_name: str) -> bytes:
 
 def write_zip(files: list[GeneratedFile], destination: Path, root_name: str) -> dict:
     """Write the archive to disk and report on it."""
+    from ..generator.writer import _guard_target
+
+    safe_root = safe_relpath(root_name)
+    if "/" in safe_root:
+        raise UnsafeIdentifier("ZIP root must be a single directory name")
     destination = destination.expanduser()
     if destination.is_dir():
-        destination = destination / f"{root_name}.zip"
+        destination = destination / f"{safe_root}.zip"
     if destination.suffix.lower() != ".zip":
         destination = destination.with_suffix(".zip")
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    payload = build_zip(files, root_name)
+    parent = _guard_target(destination.parent)
+    destination = parent / destination.name
+    if destination.is_symlink():
+        raise ValueError("refusing symlink ZIP destination")
+    parent.mkdir(parents=True, exist_ok=True)
+    payload = build_zip(files, safe_root)
+    if destination.is_symlink():
+        raise ValueError("refusing symlink ZIP destination")
     destination.write_bytes(payload)
 
     uncompressed = sum(len(f.content.encode("utf-8")) for f in files)
@@ -305,6 +318,12 @@ def reveal_in_explorer(path: Path) -> bool:
 
     target = Path(path).expanduser()
     if not target.exists():
+        return False
+    # Windows os.startfile(file) *executes* the file association. Reveal only
+    # directories; for ZIPs or other files open the containing folder instead.
+    if target.is_file():
+        target = target.parent
+    if not target.is_dir():
         return False
     try:
         if sys.platform == "win32":

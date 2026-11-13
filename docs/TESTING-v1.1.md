@@ -1,10 +1,11 @@
 # Testing the Run panel before you publish
 
-Everything below is done from your **Desktop** copy, not `F:\codeforge`.
+Run from your own Skaffo checkout (not a generated project). On Windows:
 
 ```bat
-cd /d C:\Users\ilia\Desktop\codeforge
-npm install
+cd /d C:\path\to\skaffo
+npm ci
+setup-engine.bat
 npm run dev
 ```
 
@@ -46,7 +47,8 @@ cd ..
 node scripts\test-github.cjs
 ```
 
-Expect `286 passed` and `10 passed`.
+The current suite has 313 passing Python cases on Linux and 10 GitHub
+checks; see `docs/SECURITY.md` for the additional security checks.
 
 ---
 
@@ -204,7 +206,7 @@ the one place I would like a real Windows confirmation.
 
 Even a one-line answer is useful:
 
-- [ ] `node scripts\test-launcher.cjs` → 19 passed
+- [ ] `node scripts\test-launcher.cjs` → 22 passed
 - [ ] Panel appears after Generate, versions are real
 - [ ] `Start everything` opens a terminal — **which one?**
 - [ ] After the run finishes, refresh shows *Everything is set up*

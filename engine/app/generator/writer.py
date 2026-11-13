@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import os
+import stat
 import sys
+from pathlib import PureWindowsPath
 from dataclasses import asdict
 from pathlib import Path
 
@@ -17,10 +19,21 @@ def contained_path(target: Path, rel: str) -> Path:
     nothing is ever written outside the project directory.
     """
     rel = safe_relpath(rel)
-    root = target.resolve()
-    dest = (root / rel).resolve()
-    if dest != root and root not in dest.parents:
+    root = _guard_target(target)
+    dest = root / rel
+    if not dest.is_relative_to(root):
         raise UnsafeIdentifier(f"path escapes project directory: {rel!r}")
+    # Never follow a pre-existing symlink, even one currently pointing inside
+    # the project. Recheck after mkdir in apply_plan as well.
+    current = root
+    for part in rel.split("/"):
+        current = current / part
+        try:
+            mode = current.lstat().st_mode
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(mode):
+            raise UnsafeIdentifier(f"symlink in generated path: {current}")
     return dest
 
 
@@ -64,37 +77,53 @@ def _under_workspace(tail: str, slug: str) -> Path:
 
 def resolve_target(raw: str | None, slug: str) -> Path:
     """Expand a stored project path into a real absolute directory."""
-    if not raw or raw.strip() in ("", "~", "~/Projects", "~/Projects/"):
-        return default_workspace() / slug
+    slug = safe_relpath(slug)
+    if "/" in slug:
+        raise ValueError("project slug must be a single segment")
+    text = (raw or "").strip()
+    if text in ("", "~", "~/Projects", "~/Projects/"):
+        return _guard_target(default_workspace() / slug)
 
-    p = Path(raw.strip()).expanduser()
+    win = PureWindowsPath(text)
+    if os.name != "nt" and (win.drive or text.startswith("\\\\")):
+        raise ValueError("Windows paths are not valid on this platform")
+    if os.name == "nt" and win.drive and not win.is_absolute():
+        raise ValueError("drive-relative paths are not allowed")
 
-    # "~/Projects/foo" from the UI -> Documents/SkaffoProjects/foo
-    if raw.strip().startswith("~/Projects"):
-        tail = raw.strip()[len("~/Projects"):].strip("/\\")
-        return _under_workspace(tail, slug)
+    # Match the UI notation on a component boundary, not a string prefix.
+    if text.startswith(("~/Projects/", "~/Projects\\")):
+        tail = text[len("~/Projects/"):].replace("\\", "/")
+        return _guard_target(_under_workspace(tail, slug))
 
+    p = Path(text).expanduser()
     if not p.is_absolute():
-        return _under_workspace(str(p), slug)
-
+        return _guard_target(_under_workspace(str(p), slug))
     return _guard_target(p)
 
 
-# Writing a whole project tree into one of these would be destructive.
-_FORBIDDEN_TARGETS = {
-    Path("/"), Path("/etc"), Path("/usr"), Path("/bin"), Path("/sbin"),
-    Path("/boot"), Path("/dev"), Path("/proc"), Path("/sys"), Path("/var"),
-    Path("C:/"), Path("C:/Windows"), Path("C:/Program Files"),
-}
+# Compare components, not prefixes: /usr2 is not /usr.
+_SYSTEM_UNIX = ("/etc", "/usr", "/bin", "/sbin", "/boot", "/dev",
+                "/proc", "/sys", "/var", "/lib", "/lib64", "/opt", "/run")
+_SYSTEM_WIN = {"windows", "program files", "program files (x86)",
+               "programdata", "$recycle.bin", "system volume information"}
 
 
 def _guard_target(p: Path) -> Path:
-    """Refuse obviously destructive output directories."""
-    resolved = p.resolve()
-    if resolved in {t.resolve() for t in _FORBIDDEN_TARGETS if t.exists()}:
+    """Refuse OS roots, home itself, and system directories and descendants."""
+    expanded = p.expanduser().absolute()
+    current = Path(expanded.anchor)
+    for part in expanded.parts[1:]:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError(f"refusing symlink output directory: {current}")
+    resolved = expanded.resolve()
+    if resolved == Path.home().resolve() or resolved == Path(resolved.anchor):
         raise ValueError(f"refusing to generate into system directory: {resolved}")
-    if resolved == Path.home().resolve():
-        raise ValueError("refusing to generate directly into the home directory")
+    if os.name == "nt":
+        if len(resolved.parts) < 3 or resolved.parts[1].casefold() in _SYSTEM_WIN:
+            raise ValueError(f"refusing to generate into system directory: {resolved}")
+    elif any(resolved.is_relative_to(Path(parent)) for parent in _SYSTEM_UNIX):
+        raise ValueError(f"refusing to generate into system directory: {resolved}")
     return resolved
 
 
@@ -120,6 +149,7 @@ def apply_plan(
     overwrite_conflicts: bool = False,
 ) -> dict:
     """Write files. Conflicts are skipped unless explicitly allowed."""
+    target = _guard_target(target)
     target.mkdir(parents=True, exist_ok=True)
 
     written = skipped = merged = conflicts = 0
@@ -138,6 +168,7 @@ def apply_plan(
 
         dest = contained_path(target, p.path)
         dest.parent.mkdir(parents=True, exist_ok=True)
+        dest = contained_path(target, p.path)
         dest.write_text(p.content, encoding="utf-8", newline="\n")
 
         total_bytes += len(p.content.encode("utf-8"))

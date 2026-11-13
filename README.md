@@ -7,7 +7,7 @@ Pydantic schemas, FastAPI routers, Alembic migrations, a React + TypeScript fron
 and pytest tests that pass.
 
 > **Free and open source.** Every feature is unlocked — no paid tier, no account,
-> no telemetry. Your projects never leave your machine.
+> no telemetry. Projects stay local unless you explicitly publish to GitHub.
 >
 > Formerly *CodeForge Studio*; renamed to **Skaffo** in v0.8.
 
@@ -21,8 +21,10 @@ and pytest tests that pass.
 
 ### Install (Windows)
 
-Download **`Skaffo-Setup.exe`** from the
+Download `Skaffo-Setup-1.0.0.exe` from the
 [latest release](https://github.com/ilia-dev-cmyk/skaffo/releases) and run it.
+The latest published tag is `v1.0.0`; `package.json` is `1.1.0` (source
+version). This branch does not publish a new installer.
 Python and Node are **not** required — the engine ships inside the installer.
 
 > Skaffo is not code-signed (a certificate costs money and this is free), so
@@ -76,11 +78,13 @@ cd engine
 
 ```bash
 node scripts/test-github.cjs    # GitHub publishing, against a fake API
-node scripts/test-launcher.cjs  # terminal launching, against a fake terminal (22)
+node scripts/test-launcher.cjs  # terminal launching (22 checks on Linux)
+node scripts/test-security.cjs  # IPC, terminal argv, process ownership
+node scripts/test-engine-integration.cjs  # real authenticated sidecar (requires engine venv)
 ```
 
 There is also a full end-to-end audit that launches the real app against a
-scratch data directory and clicks through every screen — 77 checks covering
+scratch data directory and clicks through every screen — checks covering
 the empty first run, the wizard, the designer canvas, DDL for all three
 dialects, OpenAPI, dry-run containment, seed-data quality, the publish
 dialog, all four themes, RTL, persistence across restart, and delete:
@@ -129,8 +133,10 @@ Everything below is implemented, tested and shipping — **not planned, not stub
 | **Empty by default** | No sample project is installed; every counter starts at zero and only shows your own work |
 | **One-file install** | The Windows installer bundles the Python engine — users need neither Python nor Node |
 
-**Quality:** 286 passing Python tests · TypeScript clean (`tsc --noEmit`) ·
-zero console errors in a headless Electron run · 65 KB initial JS bundle (20 KB gzipped).
+**Validation on this branch (Linux):** 313 Python tests passed, 22 launcher
+checks, 10 GitHub checks, 8 security checks; TypeScript and Vite build passed.
+The Electron GUI audit could not run in this sandbox (Electron binary download
+failed); CI runs it under Xvfb. See [security notes](docs/SECURITY.md).
 
 ---
 
@@ -164,13 +170,13 @@ src/
 electron/
 ├─ main.cjs               window, IPC, custom titlebar
 ├─ preload.cjs            contextBridge — no nodeIntegration
-└─ engine.cjs             spawns the Python sidecar, kills orphans, finds a free port
+└─ engine.cjs             spawns and owns the Python sidecar, finds a free port
 
 engine/                   FastAPI + SQLAlchemy + SQLite
 ├─ app/routers/           projects · schema · schema_tools · api_design · generate
 ├─ app/services/          validate · ddl · openapi_spec · export · serialize
 ├─ app/generator/         pure generators + 50 Jinja templates
-└─ tests/                 286 tests
+└─ tests/                 313 tests
 ```
 
 **The contract every generator must satisfy:**
@@ -208,9 +214,9 @@ is free text.
   process argument, and never readable by the UI layer —
   [`docs/SEED-AND-GITHUB.md`](docs/SEED-AND-GITHUB.md)
 
-132 of the 286 tests are security regression tests, and they assert on
-behaviour: shell payloads are executed in a real `bash`, generated Python is
-parsed with `ast`. Both issues were reported by a user reading the source.
+Security regression tests exercise actual shell quoting, generated Python
+parsing, filesystem writes, ZIP entries and local HTTP access controls.
+See [security notes](docs/SECURITY.md) for limitations and threat model.
 
 ---
 
@@ -260,7 +266,7 @@ yours from the first launch.
 - [x] **v0.10** — Sample data · publish to GitHub · empty first run
 - [x] **v1.0** — Windows installer · app icon · first-run welcome
 - [x] **v1.1** — Run in terminal, with prerequisite checks ← **you are here**
-- [ ] **v1.1** — Auto-update · command palette · in-app editor
+- [ ] **Future** — Auto-update · command palette · in-app editor
 
 Decisions and risks behind this order: [`docs/REVIEW.md`](docs/REVIEW.md).
 How releases are built and verified: [`docs/RELEASE.md`](docs/RELEASE.md).

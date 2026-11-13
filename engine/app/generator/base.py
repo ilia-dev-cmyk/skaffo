@@ -79,16 +79,21 @@ def project_slug(raw: str) -> str:
     # A slug is a single path segment: never a separator, never a traversal.
     if not cleaned or set(cleaned) <= {"-", ".", "_"}:
         return "project"
+    if cleaned in _RESERVED:
+        return f"{cleaned}-project"
     return cleaned
 
 
 def safe_relpath(path: str) -> str:
     """Validate a generated file path stays relative and contained."""
-    p = str(path).replace("\\", "/").strip()
-    if not p or p.startswith("/") or ".." in p.split("/"):
+    p = str(path).replace("\\", "/")
+    parts = p.split("/")
+    if (not p or p.startswith("/") or any(
+        not part or part in (".", "..") or ":" in part or "\x00" in part
+        or part.endswith((".", " ")) or part.lower().split(".")[0] in _RESERVED
+        for part in parts
+    )):
         raise UnsafeIdentifier(f"unsafe generated path: {path!r}")
-    if re.match(r"^[a-zA-Z]:", p):
-        raise UnsafeIdentifier(f"absolute path not allowed: {path!r}")
     return p
 
 

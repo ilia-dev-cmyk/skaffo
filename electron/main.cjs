@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('node:path');
-const { startEngine, stopEngine, getPort } = require('./engine.cjs');
+const fs = require('node:fs');
+const { startEngine, stopEngine, getPort, requestEngine } = require('./engine.cjs');
+const { isSafeExternal, isTrustedFrame, isKnownProjectDir } = require('./security.cjs');
 const secrets = require('./secrets.cjs');
 const github = require('./github.cjs');
 const launcher = require('./launcher.cjs');
@@ -12,6 +14,14 @@ const ROOT = path.join(__dirname, '..');
 /** @type {BrowserWindow | null} */
 let win = null;
 let enginePort = null;
+const hasInstanceLock = app.requestSingleInstanceLock();
+if (!hasInstanceLock) app.quit();
+app.on('second-instance', () => {
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
+});
 
 function createWindow() {
   win = new BrowserWindow({
@@ -28,7 +38,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
       additionalArguments: [`--skaffo-port=${enginePort ?? 8731}`],
     },
   });
@@ -42,30 +52,53 @@ function createWindow() {
   }
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (isSafeExternal(url)) shell.openExternal(url);
     return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (event, url) => {
+    if (url !== win.webContents.getURL()) event.preventDefault();
   });
 
   win.on('closed', () => { win = null; });
 }
 
+// Reject IPC from navigated documents and subframes (including embedded content).
+const handle = (channel, listener) => ipcMain.handle(channel, (event, ...args) => {
+  if (!win || !isTrustedFrame(event.senderFrame, win.webContents.mainFrame, isDev, ROOT)) {
+    throw new Error('Untrusted IPC sender');
+  }
+  return listener(event, ...args);
+});
+
+handle('engine:request', (_event, options) => requestEngine(options));
+
+// Renderer paths may only refer to an existing project output that the engine
+// has recorded after generation. In particular, openPath must never accept
+// an arbitrary executable file and publish must not stage an arbitrary folder.
+async function approvedOutput(dir) {
+  try {
+    const { data } = await requestEngine({ path: '/api/projects' });
+    return isKnownProjectDir(dir, data);
+  } catch { return false; }
+}
+
 // ── window controls ──
-ipcMain.handle('win:minimize', () => win && win.minimize());
-ipcMain.handle('win:maximize', () => {
+handle('win:minimize', () => win && win.minimize());
+handle('win:maximize', () => {
   if (!win) return false;
   if (win.isMaximized()) win.unmaximize();
   else win.maximize();
   return win.isMaximized();
 });
-ipcMain.handle('win:close', () => win && win.close());
-ipcMain.handle('app:version', () => app.getVersion());
-ipcMain.handle('app:platform', () => process.platform);
-ipcMain.handle('engine:port', () => getPort());
+handle('win:close', () => win && win.close());
+handle('app:version', () => app.getVersion());
+handle('app:platform', () => process.platform);
+handle('engine:port', () => getPort());
 
 // ── Run the generated project ──
 // Everything here is main-process only: the renderer can ask "can this run?"
 // and "open a terminal", but never gets to name a command.
-ipcMain.handle('run:check', async () => {
+handle('run:check', async () => {
   try {
     return { ok: true, ...(await launcher.checkPrerequisites()) };
   } catch (err) {
@@ -73,30 +106,38 @@ ipcMain.handle('run:check', async () => {
   }
 });
 
-ipcMain.handle('run:inspect', (_e, dir) => {
+handle('run:inspect', async (_e, dir) => {
   try {
-    return { ok: true, ...launcher.inspectProject(String(dir || '')) };
+    if (!fs.existsSync(String(dir || ''))) {
+      return { ok: true, ...launcher.inspectProject(String(dir || '')) };
+    }
+    if (!(await approvedOutput(dir))) return { ok: false, error: 'Not a generated project folder.' };
+    return { ok: true, ...launcher.inspectProject(dir) };
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) };
   }
 });
 
-ipcMain.handle('run:launch', async (_e, options) => {
+handle('run:launch', async (_e, options) => {
   // `mode` is validated against a fixed list rather than trusted, so the
   // renderer cannot smuggle a command through it (SECURITY-002).
   const allowed = new Set(['full', 'backend', 'frontend', 'seed', 'shell']);
   const mode = allowed.has(options && options.mode) ? options.mode : 'full';
   try {
-    return await launcher.launch({ dir: options && options.dir, mode });
+    const dir = options && options.dir;
+    if (typeof dir === 'string' && !fs.existsSync(dir)) {
+      return launcher.launch({ dir, mode }); // preserve the missing-folder hint
+    }
+    if (!(await approvedOutput(dir))) return { ok: false, error: 'Not a generated project folder.' };
+    return await launcher.launch({ dir, mode });
   } catch (err) {
     return { ok: false, error: String(err && err.message || err) };
   }
 });
 
-ipcMain.handle('run:open-folder', async (_e, dir) => {
-  const target = String(dir || '');
-  if (!target) return { ok: false };
-  const err = await shell.openPath(target);
+handle('run:open-folder', async (_e, dir) => {
+  if (!(await approvedOutput(dir))) return { ok: false, error: 'Not a generated project folder.' };
+  const err = await shell.openPath(dir);
   return err ? { ok: false, error: err } : { ok: true };
 });
 
@@ -106,12 +147,12 @@ ipcMain.handle('run:open-folder', async (_e, dir) => {
 // here, in the main process.
 const TOKEN_KEY = 'github.token';
 
-ipcMain.handle('gh:status', async () => ({
+handle('gh:status', async () => ({
   ...secrets.describe(TOKEN_KEY),
   gitInstalled: await github.gitAvailable(),
 }));
 
-ipcMain.handle('gh:save-token', async (_e, token) => {
+handle('gh:save-token', async (_e, token) => {
   const clean = String(token || '').trim();
   if (!clean) return { ok: false, error: 'Token is empty.' };
   try {
@@ -132,14 +173,14 @@ ipcMain.handle('gh:save-token', async (_e, token) => {
   }
 });
 
-ipcMain.handle('gh:forget-token', () => {
+handle('gh:forget-token', () => {
   sessionToken = null;
   return secrets.deleteSecret(TOKEN_KEY);
 });
 
 // Fallback when the OS keystore is missing (some Linux desktops).
 let sessionToken = null;
-ipcMain.handle('gh:use-session-token', async (_e, token) => {
+handle('gh:use-session-token', async (_e, token) => {
   const clean = String(token || '').trim();
   try {
     const user = await github.verifyToken(clean);
@@ -150,7 +191,10 @@ ipcMain.handle('gh:use-session-token', async (_e, token) => {
   }
 });
 
-ipcMain.handle('gh:publish', async (event, options) => {
+handle('gh:publish', async (event, options) => {
+  if (!(await approvedOutput(options && options.dir))) {
+    return { ok: false, error: 'Not a generated project folder.' };
+  }
   const token = secrets.getSecret(TOKEN_KEY) || sessionToken;
   if (!token) {
     return { ok: false, error: 'No GitHub token saved.',
@@ -180,6 +224,7 @@ ipcMain.handle('gh:publish', async (event, options) => {
 });
 
 app.whenReady().then(async () => {
+  if (!hasInstanceLock) return;
   try {
     const info = await startEngine({
       isDev,

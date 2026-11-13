@@ -14,7 +14,7 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
-const { startEngine, stopEngine, getPort } = require('../electron/engine.cjs');
+const { startEngine, stopEngine, getPort, requestEngine } = require('../electron/engine.cjs');
 const secrets = require('../electron/secrets.cjs');
 const github = require('../electron/github.cjs');
 
@@ -40,6 +40,7 @@ ipcMain.handle('win:close', () => {});
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('app:platform', () => process.platform);
 ipcMain.handle('engine:port', () => getPort());
+ipcMain.handle('engine:request', (_event, options) => requestEngine(options));
 
 async function settle(extra = 0) {
   // Two rAFs: capturePage() can otherwise grab a stale compositor frame.
@@ -82,17 +83,13 @@ async function reload() {
 
 /** Build a demo project through the HTTP API, exactly as the UI would. */
 async function createDemoProject() {
-  const api = `http://127.0.0.1:${port}`;
   const post = async (p, body, method = 'POST') => {
-    const r = await fetch(api + p, {
-      method, headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!r.ok) throw new Error(`${method} ${p} -> ${r.status} ${await r.text()}`);
-    return r.json();
+    const r = await requestEngine({ path: p, method, body: JSON.stringify(body) });
+    if (r.status >= 300) throw new Error(`${method} ${p} -> ${r.status} ${JSON.stringify(r.data)}`);
+    return r.data;
   };
 
-  const existing = await (await fetch(`${api}/api/projects`)).json();
+  const existing = (await requestEngine({ path: '/api/projects' })).data;
   if (existing.length) return existing[0].id;
 
   const project = await post('/api/projects', {
@@ -196,7 +193,7 @@ async function main() {
     width: W, height: H, show: true, backgroundColor: '#0F172A', autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(ROOT, 'electron', 'preload.cjs'),
-      contextIsolation: true, nodeIntegration: false, sandbox: false,
+      contextIsolation: true, nodeIntegration: false, sandbox: true,
       additionalArguments: [`--skaffo-port=${port}`],
     },
   });
