@@ -8,7 +8,10 @@ That runs three steps in order:
 
 1. `npm run build` — type-check and bundle the renderer into `dist/`
 2. `npm run build:engine` — freeze the Python engine into one executable
-3. `electron-builder --win` — produce `release/Skaffo-Setup-1.0.0.exe`
+3. `electron-builder --win` — produce `release/Skaffo-Setup-<package.json version>.exe`
+
+The last published tag is `v1.0.0`; the source metadata is `1.1.0`.
+Building locally does not change the published release.
 
 Requires Node 18+, Python 3.10+, and a populated `engine/.venv`
 (`setup-engine.bat`). PyInstaller is installed into that venv automatically.
@@ -138,9 +141,9 @@ and that `curl http://127.0.0.1:8731/health` answers. Verified before release:
 
 ## Release checklist
 
-- [ ] `npm run audit:app` → 77/77
+- [ ] `xvfb-run -a npm run audit:app` (Linux) → all checks pass
 - [ ] `cd engine && .venv\Scripts\python -m pytest tests\ -q` → all pass
-- [ ] `node scripts/test-github.cjs` → 10 passed
+- [ ] `node scripts/test-github.cjs` and `node scripts/test-security.cjs` → pass
 - [ ] `npm run dist` → installer builds, engine smoke test passes
 - [ ] Install on a machine with **no Python**, confirm it starts
 - [ ] Delete `%APPDATA%\Skaffo`, launch, confirm the welcome screen appears once

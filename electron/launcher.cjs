@@ -200,24 +200,21 @@ function terminalPlan(dir, command) {
       {
         name: 'Command Prompt',
         cmd: process.env.COMSPEC || 'cmd.exe',
-        // `start ""` supplies the window title, which `start` requires before
-        // a quoted argument. `/D` sets the working directory as its own
-        // argument rather than `cd /d "<dir>" && ...` inside the command
-        // string: cmd re-parses that string, so a path containing a space —
-        // and %TEMP% usually has one — produced
-        // "The filename, directory name, or volume label syntax is incorrect."
-        args: ['/c', 'start', '', '/D', dir, 'cmd.exe', '/k', command],
+        // Detached cmd opens its own console. cwd is passed to CreateProcess,
+        // never re-parsed by `start /D` (which expands % and metacharacters).
+        args: ['/k', command],
       },
     ];
   }
 
   if (MAC) {
-    const script =
+    // The path is a separate osascript argv item, never AppleScript source.
+    // `quoted form of` then quotes it for the shell Terminal starts.
+    const script = `on run argv\n` +
       `tell application "Terminal"\n` +
-      `  do script "cd ${shq(dir)} && ${command.replace(/"/g, '\\"')}"\n` +
-      `  activate\n` +
-      `end tell`;
-    return [{ name: 'Terminal', cmd: 'osascript', args: ['-e', script] }];
+      `do script "cd " & quoted form of (item 1 of argv) & " && " & (item 2 of argv)\n` +
+      `activate\nend tell\nend run`;
+    return [{ name: 'Terminal', cmd: 'osascript', args: ['-e', script, dir, command] }];
   }
 
   // Linux: whichever emulator is installed.
@@ -243,9 +240,8 @@ function shq(s) {
  *
  * SECURITY-002 note: `dir` comes from a project path, which is derived from
  * a user-controlled project name. It is passed as a *separate argv entry*
- * everywhere possible rather than interpolated into a shell string, and the
- * one place a string is unavoidable (cmd.exe `start`) wraps it in quotes
- * after the path has already been validated to exist on disk.
+ * to terminals as argv/cwd where possible. The xterm-style fallback must
+ * use a shell, so it quotes the directory for both shell parsing layers.
  */
 function openTerminal(dir, command) {
   return new Promise((resolve) => {

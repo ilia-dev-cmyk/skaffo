@@ -21,7 +21,7 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const { startEngine, stopEngine, getPort } = require('../electron/engine.cjs');
+const { startEngine, stopEngine, getPort, requestEngine } = require('../electron/engine.cjs');
 
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'demo-frames');
@@ -29,6 +29,7 @@ const W = 1280, H = 800;      // 16:10 — smaller than the audit so the GIF sta
 const FPS = 10;
 
 let win, port, frame = 0, recording = false;
+ipcMain.handle('engine:request', (_event, options) => requestEngine(options));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const js = (code) => win.webContents.executeJavaScript(code);
@@ -71,11 +72,9 @@ async function click(label, tries = 30) {
 }
 
 async function api(method, p, body) {
-  const r = await fetch(`http://127.0.0.1:${port}${p}`, {
-    method, headers: { 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  return r.json();
+  const r = await requestEngine({ path: p, method,
+    body: body ? JSON.stringify(body) : undefined });
+  return r.data;
 }
 
 /**
@@ -159,7 +158,7 @@ async function main() {
   });
   port = started.port ?? getPort();
   for (let i = 0; i < 80; i++) {
-    try { if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) break; } catch {}
+    try { if ((await requestEngine({ path: '/health' })).status === 200) break; } catch {}
     await sleep(250);
   }
 
@@ -168,7 +167,7 @@ async function main() {
     backgroundColor: '#0F172A', autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(ROOT, 'electron', 'preload.cjs'),
-      contextIsolation: true, nodeIntegration: false, sandbox: false,
+      contextIsolation: true, nodeIntegration: false, sandbox: true,
       additionalArguments: [`--skaffo-port=${port}`],
     },
   });

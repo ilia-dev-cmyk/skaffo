@@ -8,6 +8,8 @@ const { spawn, spawnSync } = require('node:child_process');
 const net = require('node:net');
 const path = require('node:path');
 const fs = require('node:fs');
+const { randomBytes } = require('node:crypto');
+let engineToken = null;
 
 let child = null;
 let chosenPort = null;
@@ -74,39 +76,14 @@ function resolveBundled(resourcesPath) {
   return null;
 }
 
-/**
- * Kill engine processes left behind by a previous run.
- *
- * A hard crash (or closing the terminal instead of the window) can strand the
- * Python sidecar. It keeps the SQLite file locked, so the next launch fails
- * with "database is locked".
- */
-function killOrphans(onLog) {
-  const isWin = process.platform === 'win32';
-  try {
-    if (isWin) {
-      // Match only our sidecar: python running app.main from an engine venv.
-      const script =
-        "Get-CimInstance Win32_Process | " +
-        "Where-Object { $_.CommandLine -like '*app.main*' -and $_.Name -like 'python*' } | " +
-        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }";
-      spawnSync('powershell', ['-NoProfile', '-Command', script], {
-        windowsHide: true, timeout: 5000,
-      });
-    } else {
-      spawnSync('pkill', ['-f', 'app.main --port'], { timeout: 5000 });
-    }
-    onLog?.('[engine] cleared stale engine processes');
-  } catch {
-    /* best effort — never block startup */
-  }
-}
+// Never sweep by command-line substring: app.main is a common module name,
+// and process IDs found by a system-wide scan do not prove Skaffo ownership.
+// Only the child handle created by this supervisor may be terminated.
 
 /**
  * @returns {Promise<{port:number, mode:string}>}
  */
 async function startEngine({ isDev, rootDir, resourcesPath, onLog }) {
-  killOrphans(onLog);
   chosenPort = await findFreePort();
 
   const target = (!isDev && resolveBundled(resourcesPath)) || resolveInterpreter(rootDir);
@@ -117,17 +94,26 @@ async function startEngine({ isDev, rootDir, resourcesPath, onLog }) {
 
   onLog?.(`[engine] ${target.cmd} (port ${chosenPort})`);
 
+  engineToken = randomBytes(32).toString('hex');
   child = spawn(target.cmd, [...target.args, '--port', String(chosenPort)], {
     cwd,
-    env: { ...process.env, PYTHONUNBUFFERED: '1', SKAFFO_PORT: String(chosenPort) },
+    env: { ...process.env, PYTHONUNBUFFERED: '1', SKAFFO_PORT: String(chosenPort),
+           SKAFFO_ENGINE_TOKEN: engineToken },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   });
 
   child.stdout.on('data', (d) => onLog?.(`[engine] ${String(d).trim()}`));
   child.stderr.on('data', (d) => onLog?.(`[engine!] ${String(d).trim()}`));
-  child.on('exit', (code) => onLog?.(`[engine] exited with code ${code}`));
+  const startedChild = child;
+  child.on('exit', (code) => {
+    if (child === startedChild) { child = null; chosenPort = null; engineToken = null; }
+    onLog?.(`[engine] exited with code ${code}`);
+  });
   child.on('error', (err) => onLog?.(`[engine!] spawn failed: ${err.message}`));
+  child.on('close', () => {
+    if (child === startedChild) { child = null; chosenPort = null; engineToken = null; }
+  });
 
   return { port: chosenPort, mode: target.bundled ? 'bundled' : 'venv' };
 }
@@ -136,14 +122,36 @@ function stopEngine() {
   if (!child) return;
   try {
     if (process.platform === 'win32') {
-      spawn('taskkill', ['/pid', String(child.pid), '/f', '/t'], { windowsHide: true });
+      // A synchronous, exact-PID stop also works during Electron's exit event.
+      if (child.pid && child.exitCode === null) {
+        spawnSync('taskkill', ['/pid', String(child.pid), '/f', '/t'],
+          { windowsHide: true, timeout: 5000 });
+      }
     } else {
       child.kill('SIGTERM');
     }
   } catch { /* already gone */ }
   child = null;
+  chosenPort = null;
+  engineToken = null;
 }
 
 const getPort = () => chosenPort;
 
-module.exports = { startEngine, stopEngine, getPort };
+async function requestEngine({ path: route, method = 'GET', body } = {}) {
+  if (!chosenPort || !engineToken || typeof route !== 'string' ||
+      !/^\/(?:api\/|health(?:\?|$))/.test(route) || route.startsWith('//') ||
+      /[\\\x00-\x1f]/.test(route) || /(?:^|\/)(?:\.{1,2}|%2e|%2f)/i.test(route) ||
+      route.length > 2048 ||
+      !['GET', 'POST', 'PATCH', 'PUT', 'DELETE'].includes(method) ||
+      (body !== undefined && (typeof body !== 'string' || body.length > 2_000_000))) {
+    throw new Error('Invalid engine request');
+  }
+  const response = await fetch(`http://127.0.0.1:${chosenPort}${route}`, {
+    method, headers: { 'Content-Type': 'application/json', 'X-Skaffo-Token': engineToken },
+    body, signal: AbortSignal.timeout(30000),
+  });
+  return { status: response.status, data: response.status === 204 ? null : await response.json() };
+}
+
+module.exports = { startEngine, stopEngine, getPort, requestEngine };

@@ -177,7 +177,7 @@ def export_zip(pid: str, body: ZipRequest, db: Session = Depends(get_db)):
     destination = Path(body.path).expanduser() if body.path else default_zip_path(ctx.slug)
     try:
         info = write_zip(files, destination, ctx.slug)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, f"Could not write archive: {exc}"
         ) from exc
